@@ -6,20 +6,28 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	cmv1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
 	ci "github.com/terraform-redhat/terraform-provider-rhcs/tests/ci"
 	cms "github.com/terraform-redhat/terraform-provider-rhcs/tests/utils/cms"
 	CON "github.com/terraform-redhat/terraform-provider-rhcs/tests/utils/constants"
 	exe "github.com/terraform-redhat/terraform-provider-rhcs/tests/utils/exec"
 )
 
-var _ = Describe("Kubelet config", ci.NonHCPCluster, func() {
+var _ = Describe("Kubelet config", func() {
 	defer GinkgoRecover()
 
 	var kcService *exe.KubeletConfigService
+	var cluster *cmv1.Cluster
+
 	BeforeEach(func() {
 		var err error
 		kcService, err = exe.NewKubeletConfigService(CON.KubeletConfigDir)
 		Expect(err).ToNot(HaveOccurred())
+
+		resp, err := cms.RetrieveClusterDetail(ci.RHCSConnection, clusterID)
+		Expect(err).ToNot(HaveOccurred())
+		cluster = resp.Body()
+
 	})
 	AfterEach(func() {
 		_, err := kcService.Destroy()
@@ -33,17 +41,22 @@ var _ = Describe("Kubelet config", ci.NonHCPCluster, func() {
 			Cluster:      clusterID,
 		}
 
-		_, err := kcService.Apply(kcArgs, false)
+		kubeletconfigs, err := kcService.Apply(kcArgs, false)
 		Expect(err).ToNot(HaveOccurred())
-		defer func() {
-			_, err = kcService.Destroy()
-			Expect(err).ToNot(HaveOccurred())
-		}()
+		Expect(kubeletconfigs).ToNot(BeEmpty())
 
 		By("Verify the created kubeletconfig")
-		kubeletConfig, err := cms.RetrieveKubeletConfig(ci.RHCSConnection, clusterID)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(kubeletConfig.PodPidsLimit()).To(Equal(podPidsLimit))
+		if cluster.Hypershift().Enabled() {
+			for _, kubeConfig := range kubeletconfigs {
+				kubeletConfig, err := cms.RetrieveHCPKubeletConfig(ci.RHCSConnection, clusterID, kubeConfig.ID)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(kubeletConfig.PodPidsLimit()).To(Equal(podPidsLimit))
+			}
+		} else {
+			kubeletConfig, err := cms.RetrieveKubeletConfig(ci.RHCSConnection, clusterID)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(kubeletConfig.PodPidsLimit()).To(Equal(podPidsLimit))
+		}
 
 		By("Update kubeletConfig")
 		podPidsLimit = 12346
@@ -51,24 +64,50 @@ var _ = Describe("Kubelet config", ci.NonHCPCluster, func() {
 
 		_, err = kcService.Apply(kcArgs, false)
 		Expect(err).ToNot(HaveOccurred())
-		defer func() {
-			_, err = kcService.Destroy()
-			Expect(err).ToNot(HaveOccurred())
-		}()
 
-		By("Verify the created kubeletconfig")
-		kubeletConfig, err = cms.RetrieveKubeletConfig(ci.RHCSConnection, clusterID)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(kubeletConfig.PodPidsLimit()).To(Equal(podPidsLimit))
+		By("Verify the updated kubeletconfig")
+		if cluster.Hypershift().Enabled() {
+			for _, kubeConfig := range kubeletconfigs {
+				kubeletConfig, err := cms.RetrieveHCPKubeletConfig(ci.RHCSConnection, clusterID, kubeConfig.ID)
+				Expect(err).ToNot(HaveOccurred())
+				Expect(kubeletConfig.PodPidsLimit()).To(Equal(podPidsLimit))
+			}
+		} else {
+			kubeletConfig, err := cms.RetrieveKubeletConfig(ci.RHCSConnection, clusterID)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(kubeletConfig.PodPidsLimit()).To(Equal(podPidsLimit))
+		}
 
 		By("Destroy the kubeletconfig")
 		_, err = kcService.Destroy()
 		Expect(err).ToNot(HaveOccurred())
 
 		By("Verify the created kubeletconfig")
-		_, err = cms.RetrieveKubeletConfig(ci.RHCSConnection, clusterID)
-		Expect(err).To(HaveOccurred())
+		if cluster.Hypershift().Enabled() {
+			for _, kubeConfig := range kubeletconfigs {
+				_, err := cms.RetrieveHCPKubeletConfig(ci.RHCSConnection, clusterID, kubeConfig.ID)
+				Expect(err).To(HaveOccurred())
+			}
+		} else {
+			_, err := cms.RetrieveKubeletConfig(ci.RHCSConnection, clusterID)
+			Expect(err).To(HaveOccurred())
+		}
 
+		By("Create multiple kubeletconfigs to the cluster")
+		kcArgs = &exe.KubeletConfigArgs{
+			PodPidsLimit:        podPidsLimit,
+			Cluster:             clusterID,
+			KubeLetConfigNumber: 2,
+			NamePrefix:          "kube-70128",
+		}
+		kubeletconfigs, err = kcService.Apply(kcArgs, false)
+		if cluster.Hypershift().Enabled() {
+			Expect(err).ToNot(HaveOccurred())
+			Expect(len(kubeletconfigs)).To(Equal(kcArgs.KubeLetConfigNumber))
+		} else {
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).Should(ContainSubstring("classic cluster can only have 1 kubeletconfig"))
+		}
 	})
 
 	It("will validate well - [id:70129]", ci.Day2, ci.Medium, func() {
@@ -92,5 +131,15 @@ var _ = Describe("Kubelet config", ci.NonHCPCluster, func() {
 		output, err = kcService.Plan(kcArgs)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(output).Should(ContainSubstring("The requested podPidsLimit of '%d' is above the default maximum of", kcArgs.PodPidsLimit))
+
+		if cluster.Hypershift().Enabled() {
+			By("Create more than 100 kubeletconfig is not allowed")
+			kcArgs.PodPidsLimit = 4096
+			kcArgs.KubeLetConfigNumber = 300
+			kcArgs.NamePrefix = "kc-70129"
+			_, err = kcService.Apply(kcArgs, false)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).Should(ContainSubstring("Maximum allowed is '100'"))
+		}
 	})
 })

@@ -79,7 +79,7 @@ func (proxy *ProxyService) Output() (output *ProxiesOutput, err error) {
 	additionalTrustBundles := h.DigArrayToString(out["additional_trust_bundles"], "value")
 
 	var proxies []*ProxyOutput
-	for index, _ := range httpProxies {
+	for index := range httpProxies {
 		proxy := &ProxyOutput{
 			HttpProxy:             httpProxies[index],
 			HttpsProxy:            httpsProxies[index],

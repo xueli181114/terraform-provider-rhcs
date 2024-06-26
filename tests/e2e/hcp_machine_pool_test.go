@@ -594,6 +594,67 @@ var _ = Describe("HCP MachinePool", ci.Day2, ci.NonClassicCluster, ci.FeatureMac
 			Expect(mpResponseBody.TuningConfigs()).To(BeEmpty())
 		})
 
+	It("can be created with kubeletconfig - [id:74520]", ci.High,
+		func() {
+			By("Prepare two kubeletconfigs to hosted cluster")
+			kubeArgs := &exec.KubeletConfigArgs{
+				KubeLetConfigNumber: 2,
+				NamePrefix:          "kube-74520",
+				PodPidsLimit:        12345,
+				Cluster:             clusterID,
+			}
+			kubeService, err := exec.NewKubeletConfigService()
+			Expect(err).ToNot(HaveOccurred())
+			kubeconfigs, err := kubeService.Apply(kubeArgs, false)
+			Expect(err).ToNot(HaveOccurred())
+			defer kubeService.Destroy()
+			Expect(len(kubeconfigs)).To(Equal(2))
+
+			By("Create machinepool with kubeletconfig")
+			replicas := 1
+			machineType := "m5.2xlarge"
+			name := helper.GenerateRandomName("np-72504", 2)
+			subnetId := vpcOutput.ClusterPrivateSubnets[0]
+			mpArgs = &exec.MachinePoolArgs{
+				Cluster:            &clusterID,
+				AutoscalingEnabled: helper.BoolPointer(false),
+				Replicas:           &replicas,
+				Name:               &name,
+				SubnetID:           &subnetId,
+				MachineType:        &machineType,
+				AutoRepair:         helper.BoolPointer(true),
+				KubeletConfigs:     helper.StringPointer(kubeconfigs[0].Name),
+			}
+			_, err = mpService.Apply(mpArgs, false)
+			Expect(err).ToNot(HaveOccurred())
+			defer mpService.Destroy()
+
+			By("Check the kueleteconfig is applied to the machinepool")
+			mpResponseBody, err := cms.RetrieveClusterNodePool(ci.RHCSConnection, clusterID, name)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(mpResponseBody.KubeletConfigs()[0]).To(Equal(kubeconfigs[0].Name))
+
+			By("Update the kubeletconfig of the machinepool")
+			mpArgs.KubeletConfigs = helper.StringPointer(kubeconfigs[1].Name)
+			_, err = mpService.Apply(mpArgs, false)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Check the kueleteconfig is applied to the machinepool")
+			mpResponseBody, err = cms.RetrieveClusterNodePool(ci.RHCSConnection, clusterID, name)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(mpResponseBody.KubeletConfigs()[0]).To(Equal(kubeconfigs[1].Name))
+
+			By("Remove the kubeletconfig of the machinepool")
+			mpArgs.KubeletConfigs = nil
+			_, err = mpService.Apply(mpArgs, false)
+			Expect(err).ToNot(HaveOccurred())
+
+			By("Check the kueleteconfig is applied to the machinepool")
+			mpResponseBody, err = cms.RetrieveClusterNodePool(ci.RHCSConnection, clusterID, name)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(mpResponseBody.KubeletConfigs()).To(BeEmpty())
+		})
+
 	Context("can validate", func() {
 		getDefaultMPArgs := func(name string) *exec.MachinePoolArgs {
 			replicas := 2
@@ -805,6 +866,14 @@ var _ = Describe("HCP MachinePool", ci.Day2, ci.NonClassicCluster, ci.FeatureMac
 			_, err = mpService.Apply(mpArgs, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("'aws_node_pool.tags' can not contain system tag 'api.openshift.com/id'"))
+
+			By("Try to create the nodepool wih not existing kubeletconfig")
+			mpArgs = getDefaultMPArgs(mpName)
+			mpArgs.KubeletConfigs = helper.StringPointer("notexisting")
+			_, err = mpService.Apply(mpArgs, false)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(MatchRegexp(`KubeletConfig with name[\\n\s]*'notexisting'[\\n\n\t\s]*does not exist for cluster`))
+
 		})
 
 		It("edit fields - [id:73431]", ci.Medium, func() {
@@ -880,6 +949,14 @@ var _ = Describe("HCP MachinePool", ci.Day2, ci.NonClassicCluster, ci.FeatureMac
 			_, err = mpService.Apply(mpArgs, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("Attribute taints[0].schedule_type value must be one of"))
+
+			By("Try to update the nodepool wih not existing kubeletconfig")
+			mpArgs = getDefaultMPArgs(mpName)
+			mpArgs.KubeletConfigs = helper.StringPointer("notexisting")
+			_, err = mpService.Apply(mpArgs, false)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(MatchRegexp(`KubeletConfig with name 'notexisting'[\n\t\s]*does not exist for cluster`))
+
 		})
 	})
 })

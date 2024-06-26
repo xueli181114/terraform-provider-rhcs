@@ -34,6 +34,7 @@ type MachinePoolArgs struct {
 	UpgradeAcknowledgementsFor *string   `json:"upgrade_acknowledgements_for,omitempty"`
 	OpenshiftVersion           *string   `json:"openshift_version,omitempty"`
 	AutoRepair                 *bool     `json:"auto_repair,omitempty"`
+	KubeletConfigs             *string   `json:"kubelet_configs,omitempty"`
 }
 
 type MachinePoolService struct {

@@ -9,13 +9,17 @@ import (
 )
 
 type KubeletConfigArgs struct {
-	Cluster      string `json:"cluster,omitempty"`
-	PodPidsLimit int    `json:"pod_pids_limit,omitempty"`
+	Cluster             string `json:"cluster,omitempty"`
+	PodPidsLimit        int    `json:"pod_pids_limit,omitempty"`
+	NamePrefix          string `json:"name_prefix,omitempty"`
+	KubeLetConfigNumber int    `json:"kubelet_config_number,omitempty"`
 }
 
-type KubeletConfigOutput struct {
+type KubeletConfig struct {
 	Cluster      string `json:"cluster,omitempty"`
 	PodPidsLimit int    `json:"pod_pids_limit,omitempty"`
+	ID           string `json:"id,omitempty"`
+	Name         string `json:"name,omitempty"`
 }
 
 type KubeletConfigService struct {
@@ -39,7 +43,7 @@ func (kc *KubeletConfigService) Init(manifestDirs ...string) error {
 
 }
 
-func (kc *KubeletConfigService) Apply(createArgs *KubeletConfigArgs, recordtfvars bool, extraArgs ...string) (*KubeletConfigOutput, error) {
+func (kc *KubeletConfigService) Apply(createArgs *KubeletConfigArgs, recordtfvars bool, extraArgs ...string) ([]*KubeletConfig, error) {
 	kc.CreationArgs = createArgs
 	args, tfvars := combineStructArgs(createArgs, extraArgs...)
 	_, err := runTerraformApply(kc.Context, kc.ManifestDir, args...)
@@ -59,15 +63,25 @@ func (kc *KubeletConfigService) Plan(createArgs *KubeletConfigArgs, extraArgs ..
 
 	return output, err
 }
-func (kc *KubeletConfigService) Output() (*KubeletConfigOutput, error) {
+func (kc *KubeletConfigService) Output() ([]*KubeletConfig, error) {
 	out, err := runTerraformOutput(kc.Context, kc.ManifestDir)
 	if err != nil {
 		return nil, err
 	}
-	var accOutput = &KubeletConfigOutput{
-		PodPidsLimit: helper.DigInt(out["pod_pids_limit"], "value"),
+	kubeletConfigsList := helper.DigArray(out["kubelet_configs"], "value")
+	if kubeletConfigsList == nil {
+		return nil, nil
 	}
-	return accOutput, nil
+	kubeletConfigs := []*KubeletConfig{}
+	for _, kubeletConfigsArray := range kubeletConfigsList {
+		kubeletConfig := new(KubeletConfig)
+		err = helper.MapStructure(kubeletConfigsArray.(map[string]interface{}), kubeletConfig)
+		if err != nil {
+			return kubeletConfigs, err
+		}
+		kubeletConfigs = append(kubeletConfigs, kubeletConfig)
+	}
+	return kubeletConfigs, nil
 }
 
 func (kc *KubeletConfigService) Destroy(createArgs ...*KubeletConfigArgs) (string, error) {

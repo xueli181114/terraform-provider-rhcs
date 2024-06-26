@@ -21,11 +21,11 @@ data "aws_partition" "current" {
 }
 
 locals {
-  path = coalesce(var.path, "/")
-  major_version = "${split(".", var.openshift_version)[0]}.${split(".", var.openshift_version)[1]}"
-  versionfilter = var.openshift_version == null ? "" : " and raw_id like '%${local.major_version}%'"
+  path               = coalesce(var.path, "/")
+  major_version      = "${split(".", var.openshift_version)[0]}.${split(".", var.openshift_version)[1]}"
+  versionfilter      = var.openshift_version == null ? "" : " and raw_id like '%${local.major_version}%'"
   installer_role_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role${local.path}${var.account_role_prefix}-Installer-Role"
-  aws_account_id = "${data.aws_caller_identity.current.account_id}"
+  aws_account_id     = data.aws_caller_identity.current.account_id
 }
 
 data "rhcs_policies" "all_policies" {}
